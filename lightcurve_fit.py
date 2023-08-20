@@ -19,7 +19,7 @@ rc("text", usetex=True)
 # print("")
 # exoplanet_name = input("Name: ")
 
-run = True
+run = False
 
 # these will be input for final project, but are set for now
 filename = "HATP22B-2023apr02.csv"
@@ -98,7 +98,7 @@ if run:
     sig_log10ars = 1 / (np.log(10)) * priors[3][1] / priors[3][0]
 
     # creates modified priors array
-    priors_mod = np.zeros((9, 2))
+    priors_mod = np.zeros((10, 2))
     priors_mod[0] = priors[0] # t0
     priors_mod[1] = [log10per, sig_log10per]  # orbital period
     priors_mod[2] = priors[2] # Rp/R* 
@@ -106,8 +106,9 @@ if run:
     priors_mod[4] = [cosi, sig_cosi]  # i
     priors_mod[5] = [esinw, sig_esinw]  # e
     priors_mod[6] = [ecosw, sig_ecosw]  # w
-    priors_mod[7] = [0.53, 0.01]  # limb darkening u1 (sunlike, johnsonV)
-    priors_mod[8] = [0.25, 0.01]  # limb darkening u2 
+    priors_mod[7] = [0.3, 0.01]  # limb darkening u1 (AiJ initial guess )
+    priors_mod[8] = [0.3, 0.01]  # limb darkening u2 
+    priors_mod[9] = [0.01, 0.01] # slope from airmass (arbitrary?)
 
     # sets initial parameters as values from exoplanet archive
     pars = priors_mod[:,0] 
@@ -118,13 +119,14 @@ if run:
     
     #  runs mcmc on all parameters 
     flat_sample = run_mcmc(minimize_pars, priors_mod, data)
+    np.save(f"{updated_exoplanet_name}/flatsample", flat_sample)  # saves flatsamples array to specific planet file 
 
 else:
-    flat_sample = np.load("flatsample.npy")
+    flat_sample = np.load(f"{updated_exoplanet_name}/flatsample.npy")
 
  # plots cornerplot 
 labels = ["T0", "log_period", "RpRs", "log_ars", "cosi",
-            "esinw", "ecosw", "u1", "u2"]
+            "esinw", "ecosw", "u1", "u2", "airmass_slope"]
 fig = corner.corner(flat_sample, labels=labels, show_titles=True)
 plt.tight_layout()
 fig_path = planet_dir / f"{updated_exoplanet_name}_cornerplot.png"
@@ -132,28 +134,34 @@ plt.savefig(fig_path)
 
 # extracts final parameters, saves to text file 
 mcmc_pars, mcmc_stds = flatsample_pars(flat_sample)
+labels.append("depth (ppt)")
 
 output_file_path = f'{planet_dir}/final_parameters.txt'
 with open(output_file_path, 'w') as file:
     for i, label in enumerate(labels): 
-        file.write(f"{label}: {mcmc_pars[i]} +/- {mcmc_stds[i]}")
+        file.write(f"{label}: {mcmc_pars[i]} +/- {mcmc_stds[i]} \n")
     
 # calculates residuals, RMS 
-final_lc = lc(mcmc_pars, data)
-residuals = final_lc - data["flux"] 
+final_lc = make_model(mcmc_pars, data) # includes airmass 
+detrended_lc = lc(mcmc_pars, data) # just lc 
+airmass_detrended_data = data['flux'] / (1 + mcmc_pars[9] * (data["time"] - np.median(data["time"]))) # removes airmass trend from data 
+residuals = final_lc - data["flux"]  # calculates residuals
 RMS = np.sqrt(((residuals) ** 2).mean())
 print("RMS of residuals:", RMS)
     
 # plots final lightcurve w all the other stuff on the plot AiJ uses <3 
-depth = mcmc_pars[9] / 1e6
-
+depth = mcmc_pars[10] / 1000
 plt.figure(figsize=(10, 10))
-plt.scatter(data["time"], data["flux"], color="blue", s=4, label="rel_flux_T1")
-plt.errorbar(data["time"], data["flux"], yerr=data["error"], color="blue", alpha=0.1)
-plt.plot(data["time"], final_lc, color="blue")
+
+#plt.scatter(data["time"], data["flux"] + 0.045, color="orange", s=4, label="rel_flux_T1 (raw)")
+
+plt.scatter(data["time"], airmass_detrended_data, color="blue", s=4, label="Airmass Detrended Flux")
+plt.errorbar(data["time"], airmass_detrended_data, yerr=data["error"], color="blue", alpha=0.1)
+plt.plot(data["time"], detrended_lc, color="blue")
+
 plt.scatter(data["time"], residuals + 0.945, s=4, color="fuchsia", label=f"residuals, RMS={round(RMS, 4)}")
 
-plt.ylim(1 - 14 * depth, 1 + 6 * depth)
+plt.ylim(1 - 14 * depth, 1 + 8 * depth)
 plt.legend(loc="upper center", fontsize=15)
 
 plt.xlabel("BJD_{TBD}")
@@ -163,13 +171,13 @@ fig_path = planet_dir / f"{updated_exoplanet_name}_lightcurve.png"
 plt.savefig(fig_path)
 
 # future work
+
 # - make sure this work with other exoplanets (specifically one where there are missing archive inputs)
-# - figure out how to detrend airmass (a mystery)
 # - make prettier plots with final model, residuals 
 # - figure out how to interpert RMSE of residuals 
-# - Determine best limb darkening priors (0.3, 0.3 on AIJ?)
-# - Determine which priors are best kept on or off for running MCMC/minimization
 # - make process of assigning priors/pars smoother 
-# - Ultimae goal - some sort of package?? where you can just grab it from github, install packages, and 
-#       run to process a lightcurve, get priors
-#       Also update with image processing?? if i ever ever learn that but this seems difficult-ish
+# - Ultimae goal - some sort of package?? where you can just grab it from github, install packages, and run to process a lightcurve, get priors
+#       Figure out how to give inputs in command line when run package via python lightcurve_fit.py:
+#           - nburn, nprod
+#       Figure out more convenient pipeline for getting data from drive -> ask someone? 
+# - Use this to determine minimum transit depth we can observe -> go from depth (ppm) to milimags? 
