@@ -5,6 +5,8 @@ https://www.toptal.com/developers/gitignore?templates=python,venv,pycharm,macos,
 
 # does not save PDFs - star considers before as nothing <3
 *.pdf
+*.png
+*.txt
 
 ### macOS ###
 # General
