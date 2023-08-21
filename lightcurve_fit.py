@@ -14,21 +14,12 @@ rc("text", usetex=True)
 
 # loads in observation dataframe 
 # filename = input("Enter exoplanet filename (csv): ")
-# print("")
-# print("Enter exoplanet Archive planet name \n for example, HATP22 -> HAT-P-22: \n see archive for reference: https://exoplanetarchive.ipac.caltech.edu/cgi-bin/TblView/nph-tblView?app=ExoTbls&config=PS&constraint=default_flag=1&constraint=disc_facility+like+%27%25TESS%25%27")
-# print("")
-# exoplanet_name = input("Name: ")
 
-run = False
+run = True
 
 # these will be input for final project, but are set for now
-#filename = "HATP22B-2023apr02.csv"
-filename = "WASP-65-b-UT2023.2_measurements"
-
+filename = "TOI1516b-2022sep23_measurements.xls - TOI1516b-2022sep23_measurements.xls.csv"
 exoplanet_name = find_exoplanetname(filename)
-
-print(exoplanet_name)
-sys.exit()
 
 # makes exoplanet name into possible directory name - remove spaces -> _
 updated_exoplanet_name = exoplanet_name.replace(" ", "_")
@@ -49,9 +40,9 @@ if os.path.exists(file_path) == False:
 # read in data 
 df = pd.read_csv(f"./{updated_exoplanet_name}/{filename}")
 
- # normalizes data using mean of baseline (first 50 points?)
-norm_flux = df["rel_flux_T1"] / np.mean(df["rel_flux_T1"][:15])
-norm_err = df["rel_flux_err_T1"] / np.mean(df["rel_flux_T1"][:15])
+ # normalizes data using mean of baseline (first 30 points?)
+norm_flux = df["rel_flux_T1"] / np.mean(df["rel_flux_T1"][:30])
+norm_err = df["rel_flux_err_T1"] / np.mean(df["rel_flux_T1"][:30])
 
 # runs sigma clip to 3 sigma to remove outliers 
 sigmaclip = sigma_clip(norm_flux, 3, masked=True)
@@ -63,9 +54,12 @@ data = {"time":df["BJD_TDB"][~outlier_mask],
         "error":norm_err[~outlier_mask],
         "airmass": df["AIRMASS"][~outlier_mask]}
 if run: 
+# exoplanet archive prior formatting ======================================================
+
     # grabs columns of exoplanet archive corresponding to target 
     exoplanet_archive = pd.read_csv("exoplanet_archive.csv")
-
+    
+    # finds columns corresponding to planet name 
     data_mask = exoplanet_archive["pl_name"].isin([exoplanet_name])
     data_cols = exoplanet_archive[data_mask]
     del data_cols["pl_name"] # deletes planet name column, now extraneous 
@@ -73,16 +67,35 @@ if run:
     # takes the average of all data columns to get best informed parameters/priors
     pars_df = data_cols.mean() # usse average for all 
     pars_df["pl_tranmid"] = data_cols["pl_tranmid"].median() # EXCEPT transit center time; takes median bc can't be average 
+    print(pars_df["pl_tranmid"])
 
+    # list of key values 
+    all_keys = [key for key in pars_df.keys() if key[0] == "p"]
+
+    # returns keys where data_cols["pl_name"] has a nan value 
+    nan_keys = [key for key in pars_df.index if np.isnan(pars_df[key])]
+    non_nan_keys = [key for key in all_keys if key not in nan_keys]
+
+    # dictionary of prior guesses IF exoplanet table value nan
+    nan_prior_dict = {key : exoplanet_archive[key].median() for key in all_keys[1:]}    
+    if "pl_tranmid" in nan_keys : nan_prior_dict["pl_tranmid"] = data["time"][np.argmin(data["flux"])] # initial guess for transit center time at expected center time 
+    
+    # assigns values to all keys from either exoplanet archive or priors dictionary 
+    prior_dict_1 = {key: pars_df[key] for key in non_nan_keys}
+    prior_dict = {key: nan_prior_dict[key] for key in nan_keys}
+    prior_dict.update(prior_dict_1)
+    prior_dict["pl_tranmid"] = data["time"][np.argmin(data["flux"])]
+    
     # assigns variables to values to perform modifications to
     priors = np.zeros((7, 2))
-    priors[0] = [pars_df["pl_tranmid"], pars_df["pl_tranmiderr1"]]  # T0
-    priors[1] = [pars_df["pl_orbper"], pars_df["pl_orbpererr1"]] # per
-    priors[2] = [pars_df["pl_ratror"], pars_df["pl_ratrorerr1"]] # Rp/R*
-    priors[3] = [pars_df["pl_ratdor"], pars_df["pl_ratdorerr1"]] # a/R*
-    priors[4] = [pars_df["pl_orbincl"], pars_df["pl_orbinclerr1"]]   # i
-    priors[5] = [pars_df["pl_orbeccen"], pars_df["pl_orbeccenerr1"]]   # e
-    priors[6] = [pars_df["pl_orblper"], pars_df["pl_orblpererr1"]]  # w
+    scale = 10
+    priors[0] = [prior_dict["pl_tranmid"], prior_dict["pl_tranmiderr1"] * scale]  # T0
+    priors[1] = [prior_dict["pl_orbper"], prior_dict["pl_orbpererr1"] * scale] # per
+    priors[2] = [prior_dict["pl_ratror"], prior_dict["pl_ratrorerr1"] * scale] # Rp/R*
+    priors[3] = [prior_dict["pl_ratdor"], prior_dict["pl_ratdorerr1"] * scale] # a/R*
+    priors[4] = [prior_dict["pl_orbincl"], prior_dict["pl_orbinclerr1"] * scale]   # i
+    priors[5] = [prior_dict["pl_orbeccen"], prior_dict["pl_orbeccenerr1"] * scale]   # e
+    priors[6] = [prior_dict["pl_orblper"], prior_dict["pl_orblpererr1"] * scale]  # w
 
     # modified parameters
     ecosw = priors[5][0] * np.cos(priors[6][0] * np.pi / 180)  # e cos w
@@ -186,7 +199,6 @@ plt.savefig(fig_path)
 # - make sure this work with other exoplanets (specifically one where there are missing archive inputs)
 # - make prettier plots with final model, residuals 
 # - figure out how to interpert RMSE of residuals 
-# - make process of assigning priors/pars smoother 
 # - Ultimae goal - some sort of package?? where you can just grab it from github, install packages, and run to process a lightcurve, get priors
 #       Figure out how to give inputs in command line when run package via python lightcurve_fit.py:
 #           - nburn, nprod

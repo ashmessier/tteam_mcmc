@@ -20,15 +20,11 @@ def find_exoplanetname(filename):
     planetname = filename.split("B", 1)[0] # splits on B character, takes first part 
     
     # finds first index of a number, returns that index 
-    for index, char in enumerate(planetname):
-        if char.isdigit():
-            numeric_index = index - 1 
+    numbers = [index for index, char in enumerate(planetname) if char.isdigit()]
 
     # Split the string into parts based on the numeric part
-    words = planetname[:numeric_index]
-    numbers = planetname[numeric_index:]
-    print(words)
-    print(numbers)
+    words = planetname[:numbers[0]]
+    numbers = planetname[numbers[0]:]
     
     with_dash = ["TOI", "XO", "WASP","TRES","Quatar","OGLE","HAT","K2","CoRoT"]
     no_dash = ["HD", "GJ"]
@@ -90,6 +86,8 @@ def lnp(pars, priors, data):
         float: value representing relative likelihood that input set of pars represents the bestfit parameters to the data given the data and 
         prior measurements. The larger the value, the more likely the set of parameters. 
     """
+    if pars[4] < 0: return -np.inf # chaces lnp function away from cosi < 1 bc that is illegal 
+    
     model = make_model(pars, data)
 
     # Calculate the log-likelihood
@@ -100,7 +98,7 @@ def lnp(pars, priors, data):
     log_prob_prior = 0.0
     log_prob_prior += stats.norm.logpdf(pars[0], loc=priors[0][0], scale=priors[0][1]) # t0
     log_prob_prior += stats.norm.logpdf(pars[1], loc=priors[1][0], scale=priors[1][1]) # log period
-   # log_prob_prior += stats.norm.logpdf(pars[2], loc=priors[2][0], scale=priors[2][1]) # RpRs
+    log_prob_prior += stats.norm.logpdf(pars[2], loc=priors[2][0], scale=priors[2][1]) # RpRs
     log_prob_prior += stats.norm.logpdf(pars[3], loc=priors[3][0], scale=priors[3][1]) # log_ars
     log_prob_prior += stats.norm.logpdf(pars[4], loc=priors[4][0], scale=priors[4][1]) # cosi
     log_prob_prior += stats.norm.logpdf(pars[5], loc=priors[5][0], scale=priors[5][1]) # esinw
