@@ -5,6 +5,44 @@ from pathlib import Path
 import os
 import emcee
 
+# function to find exoplanet name from filename 
+def find_exoplanetname(filename):
+    
+    """ Extracts exoplanet name in the correct format to reference the exoplanet archive table. Only currently 
+    working for exoplanets in the following catalogs: "TOI", "XO", "WASP","TRES","Quatar","OGLE","HAT","K2","CoRoT","HD", "GJ"
+
+    Returns:
+        string: exoplanet archive formatted exoplanet name 
+    """
+    # returns part of string before a "b" character 
+    filename = filename.upper() # uppercases whole string 
+    filename = filename.replace("-", "") # gets rid of dashes 
+    planetname = filename.split("B", 1)[0] # splits on B character, takes first part 
+    
+    # finds first index of a number, returns that index 
+    for index, char in enumerate(planetname):
+        if char.isdigit():
+            numeric_index = index - 1 
+
+    # Split the string into parts based on the numeric part
+    words = planetname[:numeric_index]
+    numbers = planetname[numeric_index:]
+    print(words)
+    print(numbers)
+    
+    with_dash = ["TOI", "XO", "WASP","TRES","Quatar","OGLE","HAT","K2","CoRoT"]
+    no_dash = ["HD", "GJ"]
+    
+    if words in no_dash:
+        return f"{words} {numbers} b"
+    if words in with_dash:
+        return f"{words}-{numbers} b"
+    if words == "K":
+        numbers = planetname.split("-", 1)
+        return f"K2-{numbers} b"
+    if words == "HATP":
+        return f"HAT-P-{numbers} b"
+
 # lightcurve model with batman 
 def lc(pars, data):
     

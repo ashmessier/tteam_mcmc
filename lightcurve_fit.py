@@ -22,8 +22,13 @@ rc("text", usetex=True)
 run = False
 
 # these will be input for final project, but are set for now
-filename = "HATP22B-2023apr02.csv"
-exoplanet_name = "HAT-P-22 b"
+#filename = "HATP22B-2023apr02.csv"
+filename = "WASP-65-b-UT2023.2_measurements"
+
+exoplanet_name = find_exoplanetname(filename)
+
+print(exoplanet_name)
+sys.exit()
 
 # makes exoplanet name into possible directory name - remove spaces -> _
 updated_exoplanet_name = exoplanet_name.replace(" ", "_")
@@ -148,12 +153,18 @@ airmass_detrended_data = data['flux'] / (1 + mcmc_pars[9] * (data["time"] - np.m
 residuals = final_lc - data["flux"]  # calculates residuals
 RMS = np.sqrt(((residuals) ** 2).mean())
 print("RMS of residuals:", RMS)
+
+# calculates depth as difference between baseline and transit center 
+baseline = detrended_lc.max()
+center = detrended_lc.min()
+depth_absolute = (baseline - center)/baseline * 1000
+depth_abs_err = np.std(residuals) * 1000
+print(f"absolute depth: {depth_absolute} +/- {depth_abs_err}")
+print(f"Rp/R* depth: {mcmc_pars[10]} +/- {mcmc_stds[10]}")
     
 # plots final lightcurve w all the other stuff on the plot AiJ uses <3 
 depth = mcmc_pars[10] / 1000
 plt.figure(figsize=(10, 10))
-
-#plt.scatter(data["time"], data["flux"] + 0.045, color="orange", s=4, label="rel_flux_T1 (raw)")
 
 plt.scatter(data["time"], airmass_detrended_data, color="blue", s=4, label="Airmass Detrended Flux")
 plt.errorbar(data["time"], airmass_detrended_data, yerr=data["error"], color="blue", alpha=0.1)
