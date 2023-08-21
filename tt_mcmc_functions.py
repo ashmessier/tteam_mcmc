@@ -38,6 +38,62 @@ def find_exoplanetname(filename):
         return f"K2-{numbers} b"
     if words == "HATP":
         return f"HAT-P-{numbers} b"
+    
+def get_priors(prior_dict, scale=1):
+    """Modifies priors from [t0, period, RpRs, aRs, i, e, w] -> [t), log(period), RpRs, log(ars), cosi, esinw, ecosw], 
+    adds priors for u1, u2 (limb darkening priors), and airmass trend.
+
+    Args:
+        prior_dict (dict): dictionary with keys corresponding to the above values and associated errors from the NASA exoplanet archive. 
+        scale (float): value to increase/decrease uncertainties by to improve fitting quality. Default is no scaling. 
+
+    Returns:
+        array:9x2 array compatable with the lc, lnp, and run_mcmc functioss containing initial parameters, priors to use in lc model fitting.
+    """
+    
+    # assigns variables to values to perform modifications to
+    priors = np.zeros((7, 2))
+    scale = 10
+    priors[0] = [prior_dict["pl_tranmid"], prior_dict["pl_tranmiderr1"] * scale]  # T0
+    priors[1] = [prior_dict["pl_orbper"], prior_dict["pl_orbpererr1"] * scale] # per
+    priors[2] = [prior_dict["pl_ratror"], prior_dict["pl_ratrorerr1"] * scale] # Rp/R*
+    priors[3] = [prior_dict["pl_ratdor"], prior_dict["pl_ratdorerr1"] * scale] # a/R*
+    priors[4] = [prior_dict["pl_orbincl"], prior_dict["pl_orbinclerr1"] * scale]   # i
+    priors[5] = [prior_dict["pl_orbeccen"], prior_dict["pl_orbeccenerr1"] * scale]   # e
+    priors[6] = [prior_dict["pl_orblper"], prior_dict["pl_orblpererr1"] * scale]  # w
+
+    # modified parameters
+    ecosw = priors[5][0] * np.cos(priors[6][0] * np.pi / 180)  # e cos w
+    esinw = priors[5][0] * np.sin(priors[6][0] * np.pi / 180)  # e sin w
+    cosi = np.cos(priors[4][0] * np.pi / 180)
+    log10per = np.log10(priors[1][0])
+    log10ars = np.log10(priors[3][0])
+
+    # errors
+    sig_esinw = np.sqrt((np.sin(priors[6][0] * np.pi / 180)) ** 2 * (priors[5][1] * np.pi / 180) ** 2 + (
+                priors[5][0] * np.pi / 180) ** 2 * (np.cos(priors[6][0] * np.pi / 180)) ** 2 * (
+                                    priors[6][1] * np.pi / 180) ** 2)
+    sig_ecosw = np.sqrt((np.cos(priors[6][0] * np.pi / 180)) ** 2 * (priors[5][1] * np.pi / 180) ** 2 + (
+                priors[5][0] * np.pi / 180) ** 2 * (np.sin(priors[6][0] * np.pi / 180)) ** 2 * (
+                                    priors[6][1] * np.pi / 180) ** 2)
+    sig_cosi = np.sin(cosi) * priors[4][1]
+    sig_log10per = 1 / (np.log(10)) * priors[1][1] / priors[1][0]
+    sig_log10ars = 1 / (np.log(10)) * priors[3][1] / priors[3][0]
+
+    # creates modified priors array
+    priors_mod = np.zeros((10, 2))
+    priors_mod[0] = priors[0] # t0
+    priors_mod[1] = [log10per, sig_log10per]  # orbital period
+    priors_mod[2] = priors[2] # Rp/R* 
+    priors_mod[3] = [log10ars, sig_log10per]  # a/R*
+    priors_mod[4] = [cosi, sig_cosi]  # i
+    priors_mod[5] = [esinw, sig_esinw]  # e
+    priors_mod[6] = [ecosw, sig_ecosw]  # w
+    priors_mod[7] = [0.3, 0.01]  # limb darkening u1 (AiJ initial guess )
+    priors_mod[8] = [0.3, 0.01]  # limb darkening u2 
+    priors_mod[9] = [0.01, 0.01] # slope from airmass 
+    
+    return priors_mod 
 
 # lightcurve model with batman 
 def lc(pars, data):
