@@ -4,6 +4,7 @@ import scipy.stats as stats
 from pathlib import Path
 import os
 import emcee
+import sys
 
 # function to find exoplanet name from filename 
 def find_exoplanetname(filename):
@@ -196,8 +197,8 @@ def run_mcmc(pars, priors, data):
         flat sample as .npy file for reference 
         """
         
-    nburn = 500
-    nprod = 2000
+    nburn = int(input("Number of burnin (reccomend 500): "))
+    nprod = int(input("Number of product runs (reccomend 2000): "))
     ndim = len(pars)
     nwalkers = 2*ndim
 
@@ -214,6 +215,9 @@ def run_mcmc(pars, priors, data):
 
     # creates flat_sample array for corner plot generation
     flat_sample = sampler.get_chain(discard=0, thin=1, flat=True)  # flattens list of samples
+    
+    # checks to see if too few points to create valid contours was printed 
+    
     
     return flat_sample
 

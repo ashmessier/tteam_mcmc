@@ -11,10 +11,13 @@ import os
 import shutil
 rc("font",**{"family":"serif", "serif":["Times"]})
 rc("text", usetex=True)
+import warnings
+warnings.filterwarnings("ignore")
 
 # formatting data ==============================================================================
     # loads in observation dataframe 
-filename = input("Enter exoplanet filename (csv): ")
+#filename = input("Enter exoplanet filename (csv): ")
+filename = "HAT-P-62-b_measurements.xls - HAT-P-62-b_measurements.xls.csv"
 
 # converts filename to exoplanet archive safe filename 
 exoplanet_name = find_exoplanetname(filename)
@@ -65,13 +68,35 @@ del data_cols["pl_name"] # deletes planet name column, now extraneous
 # takes the average of all data columns to get best informed parameters/priors
 pars_df = data_cols.mean() # usse average for all 
 pars_df["pl_tranmid"] = data_cols["pl_tranmid"].median() # EXCEPT transit center time; takes median bc can't be average 
+if len(pars_df) == 0: print("Planet not in exoplanet archive, initial parameters may be incorrect.")
 
 # list of key values 
 all_keys = [key for key in pars_df.keys() if key[0] == "p"]
 
+# dictionary of keys -> terms 
+keys_to_names = {'pl_orbper':"Period", 'pl_orbeccen': "Eccentricity (e)", 
+                 'pl_orbincl':"Inclination (i)", 'pl_tranmid': "Transit Center Time (T0)", 'pl_ratdor':"Scaled Semimajor Axis (a/R*)", 
+                 'pl_ratror' : "Scaled Planet Radius (Rp/R*)",  'pl_orblper':"Argument of Periastum (w)"}
+
 # returns keys where data_cols["pl_name"] has a nan value 
 nan_keys = [key for key in pars_df.index if np.isnan(pars_df[key])]
 non_nan_keys = [key for key in all_keys if key not in nan_keys]
+
+# prints which pars are referenced from where: 
+nan_keys_noerr = [key for key in nan_keys if key[-1]!="1"]
+non_nan_keys_noerr = [key for key in non_nan_keys if key[-1]!="1"]
+
+nan_names = [keys_to_names[key] for key in nan_keys_noerr]
+non_nan_names = [keys_to_names[key] for key in non_nan_keys_noerr]
+
+print("Priors referenced directly from Exoplanet Archive:")
+print("")
+for item in non_nan_names: print(item)
+print("")
+print("Priors assumed from Exoplanet Archive: ")
+print("")
+for item in nan_names: print(item)
+print("")
 
 # dictionary of prior guesses IF exoplanet table value nan
 nan_prior_dict = {key : exoplanet_archive[key].median() for key in all_keys[1:]}    
@@ -81,8 +106,6 @@ if "pl_tranmid" in nan_keys : nan_prior_dict["pl_tranmid"] = data["time"][np.arg
 prior_dict_1 = {key: pars_df[key] for key in non_nan_keys}
 prior_dict = {key: nan_prior_dict[key] for key in nan_keys}
 prior_dict.update(prior_dict_1)
-#prior_dict["pl_tranmid"] = data["time"][np.argmin(data["flux"])] # sets transit center time equal to time location of minimum center time? 
-# this overrides the value from the table (may revisit)
 
 # gets priors from dictionary 
 priors_mod = get_priors(prior_dict, scale=10)
@@ -94,44 +117,12 @@ pars = priors_mod[:,0]
 minimize_results = minimize(minimize_lnp, pars, args=(priors_mod, data), method="Nelder-Mead")
 minimize_pars = minimize_results.x
 
-#  runs mcmc on all parameters 
-flat_sample = run_mcmc(minimize_pars, priors_mod, data)
-np.save(f"{updated_exoplanet_name}/flatsample", flat_sample)  # saves flatsamples array to specific planet file 
-
-#flat_sample = np.load(f"{updated_exoplanet_name}/flatsample.npy")
-    
-# makes final plots ========================================================================================================================
-    # plots cornerplot 
-labels = ["T0", "log_period", "RpRs", "log_ars", "cosi",
-            "esinw", "ecosw", "u1", "u2", "airmass_slope"]
-fig = corner.corner(flat_sample, labels=labels, show_titles=True)
-plt.tight_layout()
-fig_path = planet_dir / f"{updated_exoplanet_name}_cornerplot.png"
-plt.savefig(fig_path)
-
-    # extracts final parameters, saves to text file 
-mcmc_pars, mcmc_stds = flatsample_pars(flat_sample)
-labels.append("depth (ppt)")
-
-    # converts final parameters back to default values 
-    # do this math ur so strong 
-    
-    # calculates residuals, RMS 
-final_lc = make_model(mcmc_pars, data) # includes airmass 
-detrended_lc = lc(mcmc_pars, data) # just lc 
-airmass_detrended_data = data['flux'] / (1 + mcmc_pars[9] * (data["time"] - np.median(data["time"]))) # removes airmass trend from data 
-residuals = final_lc - data["flux"]  # calculates residuals
-RMS = np.sqrt(((residuals) ** 2).mean())
-
-    # calculates depth as difference between baseline and transit center (what do i do w this)
-baseline = detrended_lc.max()
-center = detrended_lc.min()
-depth_absolute = (baseline - center)/baseline * 1000
-depth_abs_err = np.std(residuals) * 1000
-
-# if this is 0, means that lightcurve is flat, and transit center time is incorrect
+final_lc = make_model(minimize_pars, data) # includes airmass 
+depth_absolute = (final_lc.max() - final_lc.min())
+# if depth is 0, means that lightcurve is flat, and transit center time is incorrect, check after minimization
 if depth_absolute == 0:
-    print("Need to rerun using different transit center time..")
+    # rerun mcmc with different transit center time
+    print("Rerunning using manual transit center time...")
     prior_dict["pl_tranmid"] = data["time"][np.argmin(data["flux"])] # sets transit center time equal to time location of minimum center time? 
     # this overrides the value from the table (may revisit)
 
@@ -144,44 +135,117 @@ if depth_absolute == 0:
     # runs nelder-meade minimization on model, data to get set of initial parameters
     minimize_results = minimize(minimize_lnp, pars, args=(priors_mod, data), method="Nelder-Mead")
     minimize_pars = minimize_results.x
+    final_lc = make_model(minimize_pars, data) # includes airmass 
+    depth_absolute = (final_lc.max() - final_lc.min())
 
-    #  runs mcmc on all parameters 
-    flat_sample = run_mcmc(minimize_pars, priors_mod, data)
-    np.save(f"{updated_exoplanet_name}/flatsample", flat_sample)  # saves flatsamples array to specific planet file 
+    if depth_absolute == 0:
+        print("No valid guess for transit center time, aborting attempt.")
+        sys.exit()
 
-    #flat_sample = np.load(f"{updated_exoplanet_name}/flatsample.npy")
-        
-    # makes final plots ========================================================================================================================
-        # plots cornerplot 
-    labels = ["T0", "log_period", "RpRs", "log_ars", "cosi",
-                "esinw", "ecosw", "u1", "u2", "airmass_slope"]
+# runs mcmc
+print(f"Running MCMC for {exoplanet_name}...")
+flat_sample = run_mcmc(minimize_pars, priors_mod, data)
+    
+# Cornerplot error dealing-with ========================================================================================================================
+    # plots cornerplot 
+labels = ["T0", "log_period", "RpRs", "log_ars", "cosi",
+            "esinw", "ecosw", "u1", "u2", "airmass_slope"]
+
+    # extracts final parameters, saves to text file 
+mcmc_pars, mcmc_stds = flatsample_pars(flat_sample)
+# calculates absolute depth 
+
+# chatGPT code to catch warning 
+import logging 
+# Configure the logging system to capture the specific warning message
+logging.basicConfig(level=logging.INFO)
+
+# Define a custom handler to capture the warning message
+class MyWarningHandler(logging.Handler):
+    def __init__(self, alternative_behavior_executed, rerun_marker):
+        super().__init__()
+        self.alternative_behavior_executed = alternative_behavior_executed
+        self.rerun_marker = rerun_marker
+
+    def emit(self, record):
+        if not self.alternative_behavior_executed and "Too few points to create valid contours" in record.getMessage():
+            self.alternative_behavior_executed = True
+            self.rerun_marker[0] = True
+            
+def run_corner_plot(alternative_behavior_executed, rerun_marker):
+    warning_handler = MyWarningHandler(alternative_behavior_executed, rerun_marker)
+    logging.getLogger().addHandler(warning_handler)
+
     fig = corner.corner(flat_sample, labels=labels, show_titles=True)
     plt.tight_layout()
-    fig_path = planet_dir / f"{updated_exoplanet_name}_cornerplot.png"
+    fig_path = planet_dir /"cornerplot.png"
     plt.savefig(fig_path)
 
-        # extracts final parameters, saves to text file 
-    mcmc_pars, mcmc_stds = flatsample_pars(flat_sample)
-    labels.append("depth (ppt)")
-
-# converts final parameters back to default values 
-# do this math ur so strong 
+    logging.getLogger().removeHandler(warning_handler)
     
-    # calculates residuals, RMS 
+alternative_behavior_executed = False
+rerun_marker = [False]
+
+# Run the corner plot
+run_corner_plot(alternative_behavior_executed, rerun_marker)
+
+# If the rerun marker is set, rerun the specific code
+if rerun_marker[0]:
+    # Define a custom handler to capture the warning message for the second plot generation
+    class MyWarningHandlerSecondPlot(logging.Handler):
+        def emit(self, record):
+            global alternative_behavior_executed
+            if not alternative_behavior_executed and "Too few points to create valid contours" in record.getMessage():
+                # Code to execute when the specific warning occurs
+                print(f"Second cornerplot did not converge correctly, verify visually at tteam_mcmc/{updated_exoplanet_name}/cornerplot.png")
+                
+                keep_going = str(input("Is the cornerplot viable? y/n: "))
+                if keep_going == "y":
+                    print("Continuing...") 
+                else: 
+                    print("Aborting run...")
+                    sys.exit()
+                alternative_behavior_executed = True  # Set the flag to True
+
+    # Create the custom warning handler for the second plot generation
+    warning_handler_second_plot = MyWarningHandlerSecondPlot()
+
+    # Add the handler to the root logger
+    logging.getLogger().addHandler(warning_handler_second_plot)
+
+    # Run the code that generates the second corner plot
+    print("Too few points for valid contours. Rerunning MCMC with higher burnin, production run.")
+    flat_sample = run_mcmc(minimize_pars, priors_mod, data)
+    fig = corner.corner(flat_sample, labels=labels, show_titles=True)
+    plt.tight_layout()
+    fig_path = planet_dir /"cornerplot.png"
+    plt.savefig(fig_path)
+    print("Using current flatsample as bestfit sample...")
+    print("")
+
+    # Clean up by removing the custom warning handler for the second plot generation
+    logging.getLogger().removeHandler(warning_handler_second_plot)
+    alternative_behavior_executed = False
+
+# phew that was not fun ========================================================================================================================
+# continuing 
+
+# calculates absolute depth 
 final_lc = make_model(mcmc_pars, data) # includes airmass 
 detrended_lc = lc(mcmc_pars, data) # just lc 
 airmass_detrended_data = data['flux'] / (1 + mcmc_pars[9] * (data["time"] - np.median(data["time"]))) # removes airmass trend from data 
 residuals = final_lc - data["flux"]  # calculates residuals
 RMS = np.sqrt(((residuals) ** 2).mean())
+print(f"RMS of residuals: {RMS}")
 
     # calculates depth as difference between baseline and transit center (what do i do w this)
 baseline = detrended_lc.max()
 center = detrended_lc.min()
 depth_absolute = (baseline - center)/baseline * 1000
-depth_abs_err = np.std(residuals) * 1000
-    
+depth_abs_err = np.std(residuals) * 1000    
 
     # saves final parameters to a text file
+labels.append("depth (ppt)") # use this now after cornerplot generation 
 output_file_path = f'{planet_dir}/final_parameters.txt'
 with open(output_file_path, 'w') as file:
     for i, label in enumerate(labels): 
@@ -190,7 +254,7 @@ with open(output_file_path, 'w') as file:
     file.write(f"RMS of residuals: {RMS}")
     
     # plots final lightcurve w all the other stuff on the plot AiJ uses <3 
-depth = mcmc_pars[10] / 1000
+depth = mcmc_pars[10] / 1000 # gatheres depth value for plot spacing 
 plt.figure(figsize=(10, 10))
 
 plt.scatter(data["time"], airmass_detrended_data, color="blue", s=4, label="Airmass Detrended Flux")
@@ -207,8 +271,10 @@ plt.ylabel("Relative Flux")
 
 fig_path = planet_dir / f"{updated_exoplanet_name}_lightcurve.png"
 plt.savefig(fig_path)
+print(f"Plots and final parameters saved to direcory 'tteam_mcmc/{updated_exoplanet_name}'")
 
 # future work
+# Rerun with a bunch of datasets to pick out possible errors 
 # figure out why transit depth is sorta off + which transit depth calculation is used by astro_swarthmore so I can better compare values/errors 
 # - make prettier plots with final model, residuals , other properties 
 # - figure out how to interpert RMSE of residuals 
