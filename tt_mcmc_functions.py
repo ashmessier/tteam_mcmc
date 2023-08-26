@@ -5,6 +5,9 @@ from pathlib import Path
 import os
 import emcee
 import sys
+import logging 
+import corner
+import matplotlib.pyplot as plt
 
 # function to find exoplanet name from filename 
 def find_exoplanetname(filename):
@@ -263,3 +266,83 @@ def flatsample_pars(flat_sample):
         mcmc_stds.append(avg_std)
 
     return mcmc_pars, mcmc_stds
+
+def check_mcmc(updated_exoplanet_name, planet_dir, flat_sample, minimize_pars, priors_mod, data):
+    labels = ["T0", "log_period", "RpRs", "log_ars", "cosi",
+                "esinw", "ecosw", "u1", "u2", "airmass_slope"]
+
+        # chatGPT code to catch warning 
+    # Configure the logging system to capture the specific warning message
+    logging.basicConfig(level=logging.INFO)
+
+    # Define a custom handler to capture the warning message
+    class MyWarningHandler(logging.Handler):
+        def __init__(self, alternative_behavior_executed, rerun_marker):
+            super().__init__()
+            self.alternative_behavior_executed = alternative_behavior_executed
+            self.rerun_marker = rerun_marker
+
+        def emit(self, record):
+            if not self.alternative_behavior_executed and "Too few points to create valid contours" in record.getMessage():
+                self.alternative_behavior_executed = True
+                self.rerun_marker[0] = True
+                
+    def run_corner_plot(alternative_behavior_executed, rerun_marker):
+        warning_handler = MyWarningHandler(alternative_behavior_executed, rerun_marker)
+        logging.getLogger().addHandler(warning_handler)
+
+        fig = corner.corner(flat_sample, labels=labels, show_titles=True)
+        plt.tight_layout()
+        fig_path = planet_dir /"cornerplot.png"
+        plt.savefig(fig_path)
+
+        logging.getLogger().removeHandler(warning_handler)
+        
+    alternative_behavior_executed = False
+    rerun_marker = [False]
+
+    # Run the corner plot
+    run_corner_plot(alternative_behavior_executed, rerun_marker)
+
+    # If the rerun marker is set, rerun the specific code
+    if rerun_marker[0]:
+        # Define a custom handler to capture the warning message for the second plot generation
+        class MyWarningHandlerSecondPlot(logging.Handler):
+            def emit(self, record):
+                global alternative_behavior_executed
+                if not alternative_behavior_executed and "Too few points to create valid contours" in record.getMessage():
+                    # Code to execute when the specific warning occurs
+                    print(f"Second cornerplot did not converge correctly, verify visually at tteam_mcmc/{updated_exoplanet_name}/cornerplot.png")
+                    
+                    keep_going = str(input("Is the cornerplot viable? y/n: "))
+                    if keep_going == "y":
+                        print("Continuing...") 
+                    else: 
+                        print("Aborting run...")
+                        sys.exit()
+                    alternative_behavior_executed = True  # Set the flag to True
+
+        # Create the custom warning handler for the second plot generation
+        warning_handler_second_plot = MyWarningHandlerSecondPlot()
+
+        # Add the handler to the root logger
+        logging.getLogger().addHandler(warning_handler_second_plot)
+
+        # Run the code that generates the second corner plot
+        print("Too few points for valid contours. Rerunning MCMC with higher burnin, production run.")
+        flat_sample = run_mcmc(minimize_pars, priors_mod, data)
+        mcmc_pars, mcmc_stds = flatsample_pars(flat_sample)
+        np.savez("flatsample", mcmc_pars = mcmc_pars, mcmc_stds = mcmc_stds)
+
+        fig = corner.corner(flat_sample, labels=labels, show_titles=True)
+        plt.tight_layout()
+        fig_path = planet_dir /"cornerplot.png"
+        plt.savefig(fig_path)
+        print("Using current flatsample as bestfit sample...")
+        print("")
+
+        # Clean up by removing the custom warning handler for the second plot generation
+        logging.getLogger().removeHandler(warning_handler_second_plot)
+        alternative_behavior_executed = False
+        
+        return flat_sample 
